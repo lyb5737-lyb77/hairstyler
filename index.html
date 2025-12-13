@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 헤어 스타일러</title>
+    <link rel="stylesheet" href="style.css?v=final_v10">
+    <script type="importmap">
+    {
+        "imports": {
+            "@google/generative-ai": "https://esm.run/@google/generative-ai"
+        }
+    }
+    </script>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <img src="title_logo.png" alt="AI Hair Styler" class="title-logo">
+            <p class="subtitle">나에게 어울리는 새로운 스타일을 찾아보세요</p>
+        </header>
+
+        <!-- Usage Count Badge -->
+        <div class="usage-badge" id="usageBadge">
+            남은 횟수: <span id="remainingCount">5</span>회
+        </div>
+
+        <!-- Upload Section -->
+        <label class="upload-area" id="uploadArea" for="userPhoto">
+            <input type="file" id="userPhoto" accept="image/*" class="visually-hidden">
+
+            <div class="upload-placeholder" id="uploadPlaceholder">
+                <span class="icon">📸</span>
+                <span>사진 업로드</span>
+                <span style="font-size: 0.8rem; opacity: 0.7;">(정면 얼굴 권장)</span>
+            </div>
+
+            <img id="previewImage" class="hidden" alt="Preview">
+            <button id="removeImage" class="remove-btn hidden">×</button>
+        </label>
+
+        <!-- Gender Selection -->
+        <div class="tabs">
+            <button class="tab-pill active" data-gender="male">남성 스타일</button>
+            <button class="tab-pill" data-gender="female">여성 스타일</button>
+        </div>
+
+        <!-- Style Grid -->
+        <div class="style-grid" id="styleGrid">
+            <!-- Styles will be populated by JS -->
+        </div>
+    </div>
+
+    <!-- Style Detail Modal -->
+    <div id="styleDetailModal" class="style-detail-modal">
+        <div class="style-detail-content">
+            <button id="closeDetailBtn" class="close-detail-btn">×</button>
+
+            <div class="detail-image-container">
+                <div id="detailImage" class="detail-image"></div>
+            </div>
+
+            <div class="detail-info">
+                <h3 id="detailTitle" class="detail-title">Style Name</h3>
+                <p class="detail-desc">이 스타일로 새로운 헤어스타일을 생성하시겠습니까?</p>
+            </div>
+
+            <button id="generateBtn" class="generate-btn">
+                <span class="btn-text">이 스타일로 생성하기 ✨</span>
+                <div class="loader hidden"></div>
+            </button>
+        </div>
+    </div>
+
+    <!-- Auth Modal -->
+    <div id="authModal" class="auth-modal hidden">
+        <div class="auth-content">
+            <h3>무료 사용 횟수 만료</h3>
+            <p>추가 사용을 위해 인증이 필요합니다.</p>
+
+            <div class="security-code-display">
+                인증 번호: <span id="securityCodeDisplay"></span>
+            </div>
+
+            <div class="auth-input-group">
+                <input type="text" id="authPassword" placeholder="비밀번호 입력" maxlength="4">
+                <button id="verifyBtn" class="btn-primary">확인</button>
+            </div>
+            <p class="auth-hint">비밀번호 = (인증번호 각 자리의 합) + (추가할 횟수)</p>
+        </div>
+    </div>
+
+    <!-- Result Modal -->
+    <div id="resultSection" class="result-modal hidden">
+        <div class="modal-content">
+            <h3 style="text-align: center; margin-bottom: 10px;">생성 결과</h3>
+            <div class="result-image-container">
+                <img id="resultImage" src="" alt="Generated Hairstyle">
+            </div>
+            <div class="modal-actions">
+                <button id="closeResult" class="btn-secondary">닫기</button>
+                <button id="downloadBtn" class="btn-primary">다운로드</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Configuration
+        const CONFIG = {
+            MODEL_NAME: "gemini-3-pro-image-preview",
+            // IMPORTANT: Replace with your actual API Key
+            API_KEY: "AIzaSyBmbIQZZD2YsgpiHlE-bSolCyp4hLs8-1w"
+        };
+
+        // State
+        let state = {
+            selectedGender: "male",
+            selectedStyleIndex: null,
+            userImageFile: null,
+            styles: {
+                male: [],
+                female: []
+            },
+            remainingCount: 5,
+            currentSecurityCode: null
+        };
+
+        // DOM Elements
+        const elements = {
+            uploadArea: document.getElementById('uploadArea'),
+            userPhotoInput: document.getElementById('userPhoto'),
+            previewImage: document.getElementById('previewImage'),
+            removeImageBtn: document.getElementById('removeImage'),
+            uploadPlaceholder: document.getElementById('uploadPlaceholder'),
+
+            tabs: document.querySelectorAll('.tab-pill'),
+            styleGrid: document.getElementById('styleGrid'),
+            usageBadge: document.getElementById('usageBadge'),
+            remainingCount: document.getElementById('remainingCount'),
+
+            // Style Detail Modal
+            styleDetailModal: document.getElementById('styleDetailModal'),
+            closeDetailBtn: document.getElementById('closeDetailBtn'),
+            detailImage: document.getElementById('detailImage'),
+            detailTitle: document.getElementById('detailTitle'),
+            generateBtn: document.getElementById('generateBtn'),
+
+            // Auth Modal
+            authModal: document.getElementById('authModal'),
+            securityCodeDisplay: document.getElementById('securityCodeDisplay'),
+            authPassword: document.getElementById('authPassword'),
+            verifyBtn: document.getElementById('verifyBtn'),
+
+            resultSection: document.getElementById('resultSection'),
+            resultImage: document.getElementById('resultImage'),
+            downloadBtn: document.getElementById('downloadBtn'),
+            closeResultBtn: document.getElementById('closeResult')
+        };
+
+        // Expose for debugging
+        window.appState = state;
+        window.appElements = elements;
+
+        // Initialize
+        function init() {
+            loadUsageCount();
+            setupEventListeners();
+            loadAndSliceStyles();
+            updateUsageUI();
+
+            // Expose generateHairstyle to window for fallback access
+            window.generateHairstyle = generateHairstyle;
+        }
+
+        function loadUsageCount() {
+            const savedCount = localStorage.getItem('hairstyle_usage_count');
+            if (savedCount !== null) {
+                state.remainingCount = parseInt(savedCount, 10);
+            }
+        }
+
+        function saveUsageCount() {
+            localStorage.setItem('hairstyle_usage_count', state.remainingCount);
+            updateUsageUI();
+        }
+
+        function updateUsageUI() {
+            elements.remainingCount.textContent = state.remainingCount;
+            if (state.remainingCount <= 0) {
+                elements.usageBadge.classList.add('empty');
+            } else {
+                elements.usageBadge.classList.remove('empty');
+            }
+        }
+
+        function setupEventListeners() {
+            // File Upload
+            elements.userPhotoInput.addEventListener('change', handleFileSelect);
+
+            elements.removeImageBtn.addEventListener('click', (e) => {
+                e.preventDefault(); // Prevent label click bubbling
+                e.stopPropagation();
+                clearImage();
+            });
+
+            // Tabs
+            elements.tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    elements.tabs.forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    state.selectedGender = tab.dataset.gender;
+                    state.selectedStyleIndex = null; // Reset selection on tab switch
+                    renderStyles();
+                });
+            });
+
+            // Style Detail Modal
+            elements.closeDetailBtn.addEventListener('click', closeStyleDetail);
+            elements.styleDetailModal.addEventListener('click', (e) => {
+                if (e.target === elements.styleDetailModal) closeStyleDetail();
+            });
+
+            // Generate (Inside Modal)
+            if (elements.generateBtn) {
+                elements.generateBtn.addEventListener('click', generateHairstyle);
+            } else {
+                console.error("Generate button not found!");
+            }
+
+            // Auth Modal
+            elements.verifyBtn.addEventListener('click', verifyPassword);
+
+            // Result Modal
+            if (elements.closeResultBtn) {
+                elements.closeResultBtn.addEventListener('click', () => {
+                    elements.resultSection.classList.add('hidden');
+                });
+            }
+        }
+
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) {
+                state.userImageFile = file;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    elements.previewImage.src = e.target.result;
+                    elements.previewImage.classList.remove('hidden');
+                    elements.removeImageBtn.classList.remove('hidden');
+                    elements.uploadPlaceholder.classList.add('hidden');
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function clearImage() {
+            state.userImageFile = null;
+            elements.userPhotoInput.value = '';
+            elements.previewImage.src = '';
+            elements.previewImage.classList.add('hidden');
+            elements.removeImageBtn.classList.add('hidden');
+            elements.uploadPlaceholder.classList.remove('hidden');
+        }
+
+        async function loadAndSliceStyles() {
+            const maleLabels = ["텍스처 크롭", "아이비 리그 컷", "쉼표 머리", "가르마 펌", "시스루 댄디", "롱 트림", "리프 컷", "소프트 투블럭", "슬릭 백", "맨 번"];
+            const femaleLabels = ["히피 펌", "레이어드 C컬", "보브 컷", "긴 웨이브", "허쉬 컷", "풀뱅", "발레아쥬 컬러", "반묶음", "숏컷", "땋은 머리"];
+
+            const loadImage = (src) => {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.onerror = reject;
+                    img.src = src;
+                });
+            };
+
+            try {
+                const [manImg, womanImg] = await Promise.all([
+                    loadImage('man.png'),
+                    loadImage('woman.png')
+                ]);
+
+                const sliceImage = (img, gender, labels) => {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    const w = img.naturalWidth;
+                    const h = img.naturalHeight;
+                    const cols = 5;
+                    const rows = 2;
+                    const cellWidth = w / cols;
+                    const cellHeight = h / rows;
+
+                    // Text area height to exclude (approx 70px from bottom of each cell)
+                    const textHeight = 70;
+                    const finalHeight = cellHeight - textHeight;
+
+                    let idx = 0;
+                    for (let row = 0; row < rows; row++) {
+                        for (let col = 0; col < cols; col++) {
+                            if (idx >= labels.length) break;
+
+                            let sx = col * cellWidth;
+                            let sy = row * cellHeight;
+                            let currentHeight = finalHeight;
+
+                            canvas.width = cellWidth;
+                            canvas.height = currentHeight;
+
+                            // Draw only the image part, excluding the bottom text area
+                            ctx.drawImage(img, sx, sy, cellWidth, currentHeight, 0, 0, cellWidth, currentHeight);
+
+                            const dataURL = canvas.toDataURL('image/png');
+                            state.styles[gender].push({
+                                id: `${gender.charAt(0)}${idx + 1}`,
+                                src: dataURL,
+                                label: labels[idx]
+                            });
+                            idx++;
+                        }
+                    }
+                };
+
+                sliceImage(manImg, 'male', maleLabels);
+                sliceImage(womanImg, 'female', femaleLabels);
+
+                console.log("Styles sliced and loaded:", state.styles);
+                renderStyles();
+
+            } catch (error) {
+                console.error("Failed to load style images", error);
+                alert("스타일 이미지를 불러오는데 실패했습니다.");
+            }
+        }
+
+        function renderStyles() {
+            elements.styleGrid.innerHTML = '';
+            const currentStyles = state.styles[state.selectedGender];
+
+            currentStyles.forEach((style, index) => {
+                const div = document.createElement('div');
+                div.className = `style-item ${state.selectedStyleIndex === index ? 'selected' : ''}`;
+                div.onclick = () => openStyleDetail(index);
+
+                // Use IMG tag instead of background image for better fit
+                const img = document.createElement('img');
+                img.src = style.src;
+                img.className = 'style-item-img-tag';
+                img.alt = style.label;
+
+                div.appendChild(img);
+                elements.styleGrid.appendChild(div);
+            });
+        }
+
+        function openStyleDetail(index) {
+            state.selectedStyleIndex = index;
+            const currentStyles = state.styles[state.selectedGender];
+            const style = currentStyles[index];
+
+            // Update Modal Content
+            elements.detailTitle.textContent = style.label;
+
+            // For modal, we can use the sliced image directly
+            elements.detailImage.style.backgroundImage = `url('${style.src}')`;
+            elements.detailImage.style.backgroundPosition = 'center';
+            elements.detailImage.style.backgroundSize = "contain";
+            elements.detailImage.style.backgroundRepeat = "no-repeat";
+
+            // Show Modal
+            elements.styleDetailModal.classList.add('open');
+
+            renderStyles();
+        }
+
+        function closeStyleDetail() {
+            elements.styleDetailModal.classList.remove('open');
+        }
+
+        function showAuthModal() {
+            // Generate 4-digit random number
+            const randomCode = Math.floor(1000 + Math.random() * 9000);
+            state.currentSecurityCode = randomCode;
+
+            elements.securityCodeDisplay.textContent = randomCode;
+            elements.authPassword.value = '';
+            elements.authModal.classList.remove('hidden');
+        }
+
+        function verifyPassword() {
+            const input = elements.authPassword.value;
+            if (!input) return alert("비밀번호를 입력해주세요.");
+
+            const codeStr = state.currentSecurityCode.toString();
+            let sum = 0;
+            for (let char of codeStr) {
+                sum += parseInt(char, 10);
+            }
+
+            // Parse input: last digit is extra count, rest is sum
+            if (input.length < 2) return alert("잘못된 비밀번호 형식입니다.");
+
+            const extraCountStr = input.slice(-1); // Last digit
+            const sumInputStr = input.slice(0, -1); // Rest
+
+            const extraCount = parseInt(extraCountStr, 10);
+            const sumInput = parseInt(sumInputStr, 10);
+
+            if (isNaN(extraCount) || isNaN(sumInput)) {
+                return alert("숫자만 입력해주세요.");
+            }
+
+            if (sumInput === sum) {
+                // Success
+                state.remainingCount += extraCount;
+                saveUsageCount();
+                elements.authModal.classList.add('hidden');
+                alert(`인증 성공! ${extraCount}회가 충전되었습니다.`);
+                closeStyleDetail(); // Close detail to refresh state if needed
+            } else {
+                alert("비밀번호가 일치하지 않습니다.");
+            }
+        }
+
+        async function generateHairstyle() {
+            console.log("generateHairstyle called"); // Debug log
+
+            if (state.remainingCount <= 0) {
+                closeStyleDetail();
+                showAuthModal();
+                return;
+            }
+
+            if (!CONFIG.API_KEY || CONFIG.API_KEY === "YOUR_API_KEY_HERE") {
+                closeStyleDetail();
+                return alert("소스코드의 CONFIG.API_KEY에 유효한 API Key를 입력해주세요.");
+            }
+
+            if (!state.userImageFile) {
+                closeStyleDetail();
+                return alert("먼저 본인의 사진을 업로드해주세요.");
+            }
+
+            setLoading(true);
+
+            try {
+                console.log("Loading GoogleGenerativeAI module..."); // Debug log
+                const module = await import("@google/generative-ai");
+                console.log("Module loaded:", module); // Debug log
+
+                let GoogleGenerativeAI = module.GoogleGenerativeAI;
+                if (!GoogleGenerativeAI && module.default) {
+                    GoogleGenerativeAI = module.default.GoogleGenerativeAI;
+                }
+
+                if (!GoogleGenerativeAI) {
+                    throw new Error("GoogleGenerativeAI 클래스를 모듈에서 찾을 수 없습니다.");
+                }
+
+                const genAI = new GoogleGenerativeAI(CONFIG.API_KEY);
+                const model = genAI.getGenerativeModel({ model: CONFIG.MODEL_NAME });
+
+                // Convert user image to base64
+                const userImageBase64 = await fileToGenerativePart(state.userImageFile);
+
+                // Get selected style image (sliced)
+                const currentStyles = state.styles[state.selectedGender];
+                if (!currentStyles || !currentStyles[state.selectedStyleIndex]) {
+                    throw new Error("선택된 스타일 정보를 찾을 수 없습니다.");
+                }
+                const selectedStyle = currentStyles[state.selectedStyleIndex];
+
+                // Use the sliced image data directly
+                const styleImageBase64 = {
+                    inlineData: {
+                        data: selectedStyle.src.split(',')[1],
+                        mimeType: "image/png"
+                    }
+                };
+
+                const prompt = `
+                    You are an expert hair stylist and professional image editor.
+                    I will provide two images:
+                    1. User Photo: The target person.
+                    2. Hairstyle Reference: The style to apply.
+
+                    Task: Realistically apply the hairstyle from the Reference image to the person in the User Photo.
+
+                    Critical Requirements:
+                    - PRESERVE the user's face identity, facial features, skin tone, expression, lighting, and background EXACTLY as they are. Do NOT modify the face.
+                    - ADAPT the reference hairstyle to fit the user's head shape and pose naturally.
+                    - BLEND the hair edges seamlessly with the user's forehead and ears.
+                    - MATCH the lighting and shadows of the new hair to the user's original photo.
+                    - Return ONLY the generated image.
+                `;
+
+                console.log("Sending request to Gemini API..."); // Debug log
+                const result = await model.generateContent([
+                    prompt,
+                    userImageBase64,
+                    styleImageBase64
+                ]);
+
+                console.log("Full Result Object:", result);
+                const response = await result.response;
+
+                // Handle Image Response
+                let generatedImageBase64 = null;
+
+                if (response.candidates && response.candidates[0] && response.candidates[0].content && response.candidates[0].content.parts) {
+                    for (const part of response.candidates[0].content.parts) {
+                        if (part.inlineData && part.inlineData.mimeType.startsWith('image/')) {
+                            generatedImageBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                            break;
+                        }
+                    }
+                }
+
+                if (generatedImageBase64) {
+                    // Decrement count on success
+                    state.remainingCount--;
+                    saveUsageCount();
+
+                    elements.resultImage.src = generatedImageBase64;
+                    closeStyleDetail(); // Close detail modal
+                    elements.resultSection.classList.remove('hidden'); // Show result modal
+
+                    // Setup download button
+                    elements.downloadBtn.onclick = () => {
+                        const link = document.createElement('a');
+                        link.href = generatedImageBase64;
+                        link.download = `hairstyle-result-${Date.now()}.png`;
+                        link.click();
+                    };
+                } else {
+                    let text = "";
+                    try {
+                        text = response.text();
+                    } catch (e) {
+                        text = JSON.stringify(response, null, 2);
+                    }
+                    console.warn("No image found in response. Text content:", text);
+                    alert("이미지가 생성되지 않았습니다. 콘솔 로그(F12)를 확인해주세요.\n응답 내용: " + text.substring(0, 100) + "...");
+                }
+
+            } catch (error) {
+                console.error("Error:", error);
+                alert("오류가 발생했습니다: " + error.message);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        async function fileToGenerativePart(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const base64Data = reader.result.split(',')[1];
+                    resolve({
+                        inlineData: {
+                            data: base64Data,
+                            mimeType: file.type || "image/png"
+                        }
+                    });
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function setLoading(isLoading) {
+            const btn = elements.generateBtn;
+            if (!btn) return;
+
+            const text = btn.querySelector('.btn-text');
+            const loader = btn.querySelector('.loader');
+
+            if (isLoading) {
+                btn.disabled = true;
+                if (text) text.classList.add('hidden');
+                if (loader) loader.classList.remove('hidden');
+            } else {
+                btn.disabled = false;
+                if (text) text.classList.remove('hidden');
+                if (loader) loader.classList.add('hidden');
+            }
+        }
+
+        // Start
+        try {
+            init();
+            console.log("App initialized successfully");
+        } catch (e) {
+            console.error("App initialization failed:", e);
+            alert("앱을 시작하는 중 오류가 발생했습니다: " + e.message);
+        }
+    </script>
+</body>
+
+</html>

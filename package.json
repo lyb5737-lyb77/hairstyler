@@ -1,0 +1,16 @@
+{
+  "name": "hairstyler",
+  "version": "1.0.0",
+  "description": "AI Hair Styler App",
+  "main": "index.html",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "npx http-server ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^0.1.0"
+  }
+}

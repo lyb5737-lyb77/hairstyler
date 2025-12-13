@@ -1,0 +1,288 @@
+// import { GoogleGenerativeAI } from "@google/genai";
+console.log("Script starting...");
+
+// Configuration
+const CONFIG = {
+    // This should be replaced by the user's key or input
+    MODEL_NAME: "gemini-3.0-pro-image-preview",
+};
+
+// State
+let state = {
+    apiKey: "",
+    selectedGender: "male",
+    selectedStyleIndex: null,
+    userImageFile: null,
+    styles: {
+        male: [],
+        female: []
+    }
+};
+
+// Expose for debugging
+window.appState = state;
+window.appElements = elements;
+
+// DOM Elements
+const elements = {
+    apiKeyInput: document.getElementById('apiKey'),
+    uploadArea: document.getElementById('uploadArea'),
+    userPhotoInput: document.getElementById('userPhoto'),
+    previewImage: document.getElementById('previewImage'),
+    removeImageBtn: document.getElementById('removeImage'),
+    uploadPlaceholder: document.getElementById('uploadPlaceholder'),
+    tabs: document.querySelectorAll('.tab-pill'),
+    styleGrid: document.getElementById('styleGrid'),
+    generateBtn: document.getElementById('generateBtn'),
+    resultSection: document.getElementById('resultSection'),
+    resultImage: document.getElementById('resultImage'),
+    downloadBtn: document.getElementById('downloadBtn'),
+    closeResultBtn: document.getElementById('closeResult')
+};
+window.appElements = elements;
+
+// Initialize
+function init() {
+    setupEventListeners();
+    loadStyles();
+    renderStyles();
+}
+
+function setupEventListeners() {
+    // API Key
+    elements.apiKeyInput.addEventListener('input', (e) => {
+        state.apiKey = e.target.value;
+        console.log("API Key updated:", !!state.apiKey);
+        updateGenerateButton();
+    });
+
+    // File Upload
+    // Note: uploadArea is a label, so click automatically triggers input. No JS listener needed for trigger.
+    elements.userPhotoInput.addEventListener('change', handleFileSelect);
+
+    elements.removeImageBtn.addEventListener('click', (e) => {
+        e.preventDefault(); // Prevent label click bubbling
+        e.stopPropagation();
+        clearImage();
+    });
+
+    // Tabs
+    elements.tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            elements.tabs.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            state.selectedGender = tab.dataset.gender;
+            state.selectedStyleIndex = null; // Reset selection on tab switch
+            renderStyles();
+            updateGenerateButton();
+        });
+    });
+
+    // Generate
+    elements.generateBtn.addEventListener('click', generateHairstyle);
+
+    // Result Modal
+    if (elements.closeResultBtn) {
+        elements.closeResultBtn.addEventListener('click', () => {
+            elements.resultSection.classList.add('hidden');
+        });
+    }
+}
+
+function loadStyles() {
+    for (let i = 1; i <= 10; i++) {
+        state.styles.male.push({
+            id: `m${i}`,
+            src: 'man.png',
+            label: `스타일 ${i}`
+        });
+        state.styles.female.push({
+            id: `f${i}`,
+            src: 'woman.png',
+            label: `스타일 ${i}`
+        });
+    }
+}
+
+function renderStyles() {
+    elements.styleGrid.innerHTML = '';
+    const currentStyles = state.styles[state.selectedGender];
+
+    currentStyles.forEach((style, index) => {
+        const div = document.createElement('div');
+        div.className = `style-item ${state.selectedStyleIndex === index ? 'selected' : ''}`;
+        div.onclick = () => selectStyle(index);
+
+        const img = document.createElement('img');
+        img.src = style.src;
+        img.alt = style.label;
+
+        div.appendChild(img);
+        elements.styleGrid.appendChild(div);
+    });
+}
+
+function selectStyle(index) {
+    state.selectedStyleIndex = index;
+    renderStyles();
+    updateGenerateButton();
+}
+
+function handleFileSelect(e) {
+    const file = e.target.files[0];
+    if (file) {
+        state.userImageFile = file;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            elements.previewImage.src = e.target.result;
+            elements.previewImage.classList.remove('hidden');
+            elements.removeImageBtn.classList.remove('hidden');
+            elements.uploadPlaceholder.classList.add('hidden');
+        };
+        reader.readAsDataURL(file);
+        updateGenerateButton();
+    }
+}
+
+function clearImage() {
+    state.userImageFile = null;
+    elements.userPhotoInput.value = '';
+    elements.previewImage.src = '';
+    elements.previewImage.classList.add('hidden');
+    elements.removeImageBtn.classList.add('hidden');
+    elements.uploadPlaceholder.classList.remove('hidden');
+    updateGenerateButton();
+}
+
+function updateGenerateButton() {
+    const isValid = state.apiKey && state.userImageFile && state.selectedStyleIndex !== null;
+    console.log("Update Generate Button:", {
+        apiKey: !!state.apiKey,
+        userImageFile: !!state.userImageFile,
+        selectedStyleIndex: state.selectedStyleIndex,
+        isValid
+    });
+    elements.generateBtn.disabled = !isValid;
+}
+
+async function generateHairstyle() {
+    if (!state.apiKey) return alert("API Key를 입력해주세요.");
+
+    setLoading(true);
+
+    try {
+        const { GoogleGenerativeAI } = await import("@google/genai");
+        const genAI = new GoogleGenerativeAI(state.apiKey);
+        const model = genAI.getGenerativeModel({ model: CONFIG.MODEL_NAME });
+
+        // Convert user image to base64
+        const userImageBase64 = await fileToGenerativePart(state.userImageFile);
+
+        // Get selected style image
+        const styleAsset = state.selectedGender === 'male' ? 'man.png' : 'woman.png';
+        const styleImageResponse = await fetch(styleAsset);
+        const styleImageBlob = await styleImageResponse.blob();
+        const styleImageBase64 = await fileToGenerativePart(styleImageBlob);
+
+        const prompt = `
+            You are an expert hair stylist AI.
+            I will provide two images:
+            1. A user's photo.
+            2. A reference hairstyle image (Style #${state.selectedStyleIndex + 1}).
+            
+            Task: Apply the hairstyle from the reference image to the user in the first photo.
+            Maintain the user's face, lighting, and background as much as possible.
+            Only change the hair to match the reference style.
+            Return only the generated image.
+        `;
+
+        const result = await model.generateContent([
+            prompt,
+            userImageBase64,
+            styleImageBase64
+        ]);
+
+        const response = await result.response;
+
+        // Handle Image Response for Gemini 3 Pro Image
+        // The model returns the image in the candidates list
+        // We need to check if there are parts with inline data (image)
+        console.log("Full Response Object:", response);
+
+        let generatedImageBase64 = null;
+
+        if (response.candidates && response.candidates[0] && response.candidates[0].content && response.candidates[0].content.parts) {
+            for (const part of response.candidates[0].content.parts) {
+                if (part.inlineData && part.inlineData.mimeType.startsWith('image/')) {
+                    generatedImageBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                    break;
+                }
+            }
+        }
+
+        if (generatedImageBase64) {
+            elements.resultImage.src = generatedImageBase64;
+            elements.resultSection.classList.remove('hidden');
+
+            // Setup download button
+            elements.downloadBtn.onclick = () => {
+                const link = document.createElement('a');
+                link.href = generatedImageBase64;
+                link.download = `hairstyle-result-${Date.now()}.png`;
+                link.click();
+            };
+        } else {
+            // Fallback if no image found (maybe text response explaining why)
+            const text = response.text();
+            console.warn("No image found in response, showing text:", text);
+            alert("이미지가 생성되지 않았습니다. 모델 응답: " + text);
+        }
+
+    } catch (error) {
+        console.error("Error:", error);
+        alert("오류가 발생했습니다: " + error.message);
+    } finally {
+        setLoading(false);
+    }
+}
+
+async function fileToGenerativePart(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            const base64Data = reader.result.split(',')[1];
+            resolve({
+                inlineData: {
+                    data: base64Data,
+                    mimeType: file.type || "image/png"
+                }
+            });
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+function setLoading(isLoading) {
+    const btn = elements.generateBtn;
+    const text = btn.querySelector('.btn-text');
+    const loader = btn.querySelector('.loader');
+
+    if (isLoading) {
+        btn.disabled = true;
+        text.classList.add('hidden');
+        loader.classList.remove('hidden');
+    } else {
+        btn.disabled = false;
+        text.classList.remove('hidden');
+        loader.classList.add('hidden');
+    }
+}
+
+// Start
+try {
+    init();
+    console.log("App initialized successfully");
+} catch (e) {
+    console.error("App initialization failed:", e);
+    alert("앱을 시작하는 중 오류가 발생했습니다: " + e.message);
+}
