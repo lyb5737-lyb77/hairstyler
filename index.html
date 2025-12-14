@@ -110,8 +110,11 @@
         // Configuration
         const CONFIG = {
             MODEL_NAME: "gemini-3-pro-image-preview",
-            // IMPORTANT: Replace with your actual API Key
-            API_KEY: "AIzaSyCDLQxtK8MRFPkbM0lgW6l1rJjoO9dTj-s"
+            // 중요: 이것은 기본적인 난독화 기술입니다.
+            // 결정적인 공격자가 키를 찾는 것을 막을 수는 없습니다.
+            // 실제 보안을 위해서는 Google Cloud Console에서 HTTP 리퍼러 제한을 사용하세요.
+            KEY_PART1: "AIzaSyCDLQxtK8MRFPkb",
+            KEY_PART2: "M0lgW6l1rJjoO9dTj-s"
         };
 
         // State
@@ -159,9 +162,6 @@
             closeResultBtn: document.getElementById('closeResult')
         };
 
-        // Expose for debugging
-        window.appState = state;
-        window.appElements = elements;
 
         // Initialize
         function init() {
@@ -433,7 +433,10 @@
                 return;
             }
 
-            if (!CONFIG.API_KEY || CONFIG.API_KEY === "YOUR_API_KEY_HERE") {
+            // API Key 재조합
+            const API_KEY = CONFIG.KEY_PART1 + CONFIG.KEY_PART2;
+
+            if (!API_KEY || API_KEY === "YOUR_API_KEY_HERE") {
                 closeStyleDetail();
                 return alert("소스코드의 CONFIG.API_KEY에 유효한 API Key를 입력해주세요.");
             }
@@ -446,9 +449,7 @@
             setLoading(true);
 
             try {
-                console.log("Loading GoogleGenerativeAI module..."); // Debug log
                 const module = await import("@google/generative-ai");
-                console.log("Module loaded:", module); // Debug log
 
                 let GoogleGenerativeAI = module.GoogleGenerativeAI;
                 if (!GoogleGenerativeAI && module.default) {
@@ -459,7 +460,7 @@
                     throw new Error("GoogleGenerativeAI 클래스를 모듈에서 찾을 수 없습니다.");
                 }
 
-                const genAI = new GoogleGenerativeAI(CONFIG.API_KEY);
+                const genAI = new GoogleGenerativeAI(API_KEY);
                 const model = genAI.getGenerativeModel({ model: CONFIG.MODEL_NAME });
 
                 // Convert user image to base64
